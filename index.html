@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RawShare — P2P File Transfer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #080808;
+  --surface: #111111;
+  --surface2: #181818;
+  --surface3: #202020;
+  --border: #242424;
+  --border2: #333333;
+  --text: #efefef;
+  --muted: #777;
+  --muted2: #444;
+  --accent: #e8ff47;
+  --accent2: #47e8ff;
+  --danger: #ff5252;
+  --success: #52ffaa;
+  --mono: 'Space Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-x: hidden;
+}
+
+/* SCANLINE TEXTURE */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* HEADER */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 40px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: rgba(8,8,8,0.97);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+}
+
+.logo {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text);
+}
+
+.logo-mark {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.logo-mark::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: breathe 2s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.6); opacity: 0.4; }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status-pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 6px 14px;
+  border-radius: 30px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: all 0.3s;
+}
+
+.status-pill .blink {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background 0.3s;
+}
+
+.status-pill.ready { color: #aaa; border-color: #333; }
+.status-pill.connected { color: var(--success); border-color: #52ffaa33; }
+.status-pill.connected .blink { background: var(--success); animation: blink 1.2s infinite; }
+.status-pill.connecting { color: var(--accent); border-color: #e8ff4733; }
+.status-pill.connecting .blink { background: var(--accent); animation: blink 0.5s infinite; }
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+/* LAYOUT */
+.app {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 40px 80px;
+}
+
+/* TABS */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 36px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  padding: 14px 32px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.2s;
+}
+
+.tab-btn::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transition: transform 0.2s ease;
+}
+
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); }
+.tab-btn.active::after { transform: scaleX(1); }
+
+/* PANELS */
+.panel { display: none; animation: panelIn 0.25s ease; }
+.panel.active { display: block; }
+
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* SECTION LABEL */
+.sec-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--muted2);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* ID CARD */
+.id-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-bottom: 20px;
+}
+
+.id-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.peer-id-display {
+  font-family: var(--mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 8px;
+  color: var(--accent);
+  flex: 1;
+  min-width: 160px;
+}
+
+.peer-id-display.loading { color: var(--muted2); }
+
+.icon-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.icon-btn:hover { background: var(--surface3); border-color: #555; }
+.icon-btn.done { background: rgba(82,255,170,0.1); border-color: rgba(82,255,170,0.3); color: var(--success); }
+
+/* CONNECT SECTION */
+.connect-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-bottom: 20px;
+}
+
+.input-group {
+  display: flex;
+  gap: 10px;
+}
+
+.code-input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  padding: 13px 18px;
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.code-input::placeholder { color: var(--muted2); letter-spacing: 2px; font-size: 13px; }
+.code-input:focus { border-color: var(--accent); }
+
+.cta-btn {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 13px 26px;
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.cta-btn:hover { background: #d4e83a; transform: translateY(-1px); }
+.cta-btn:active { transform: translateY(0); }
+.cta-btn:disabled { background: var(--surface3); color: var(--muted); cursor: not-allowed; transform: none; }
+
+/* CONN BAR */
+.conn-bar {
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 13px 18px;
+  margin-bottom: 20px;
+  align-items: center;
+  gap: 12px;
+}
+
+.conn-bar.visible { display: flex; animation: panelIn 0.2s ease; }
+.conn-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+.conn-indicator.live { background: var(--success); animation: blink 1.5s infinite; }
+.conn-indicator.wait { background: var(--accent); animation: blink 0.6s infinite; }
+
+.conn-label { font-family: var(--mono); font-size: 11px; color: var(--muted); flex: 1; }
+.conn-label strong { color: var(--text); }
+
+.sm-btn {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sm-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* DROP ZONE */
+.drop-zone {
+  position: relative;
+  border: 2px dashed var(--border2);
+  border-radius: 12px;
+  padding: 56px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.drop-zone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(232,255,71,0.04) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.drop-zone:hover::before, .drop-zone.over::before { opacity: 1; }
+.drop-zone:hover, .drop-zone.over { border-color: var(--accent); }
+
+.drop-zone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.drop-arrow {
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--border2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 18px;
+  transition: border-color 0.2s;
+}
+
+.drop-zone:hover .drop-arrow, .drop-zone.over .drop-arrow {
+  border-color: var(--accent);
+}
+
+.drop-arrow svg { stroke: var(--muted); transition: stroke 0.2s; }
+.drop-zone:hover .drop-arrow svg, .drop-zone.over .drop-arrow svg { stroke: var(--accent); }
+
+.drop-title {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.drop-sub { font-size: 13px; color: var(--muted); }
+
+/* FILE QUEUE */
+.file-queue { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  animation: slideIn 0.2s ease;
+  transition: border-color 0.3s;
+}
+
+.file-row.sent { border-color: rgba(82,255,170,0.2); }
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.file-icon-box {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+}
+
+.file-meta-col { flex: 1; min-width: 0; }
+
+.file-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.file-info { font-size: 11px; color: var(--muted); }
+
+.progress-track {
+  width: 70px;
+  height: 3px;
+  background: var(--surface3);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.2s;
+}
+
+.progress-fill.done { background: var(--success); }
+
+.rm-btn {
+  background: none;
+  border: none;
+  color: var(--muted2);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.rm-btn:hover { color: var(--danger); }
+
+/* SEND CTA */
+.send-cta {
+  width: 100%;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  padding: 16px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.send-cta:hover { background: #d4e83a; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(232,255,71,0.15); }
+.send-cta:active { transform: translateY(0); box-shadow: none; }
+.send-cta:disabled { background: var(--surface2); color: var(--muted); transform: none; box-shadow: none; cursor: not-allowed; }
+
+/* RECEIVE */
+.receive-stack { display: flex; flex-direction: column; gap: 10px; }
+
+.empty-state {
+  text-align: center;
+  padding: 72px 20px;
+  color: var(--muted);
+}
+
+.empty-icon {
+  width: 64px;
+  height: 64px;
+  border: 1px dashed var(--border2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  font-size: 24px;
+}
+
+.empty-label { font-family: var(--mono); font-size: 12px; letter-spacing: 2px; margin-bottom: 8px; }
+.empty-sub { font-size: 12px; color: var(--muted2); }
+
+.recv-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  animation: slideIn 0.25s ease;
+}
+
+.recv-row.complete { border-color: rgba(82,255,170,0.25); }
+
+.dl-btn {
+  background: var(--success);
+  color: #000;
+  border: none;
+  padding: 9px 18px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.dl-btn:hover { background: #3de090; transform: scale(1.03); }
+
+/* TOAST */
+.toasts {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9998;
+  pointer-events: none;
+}
+
+.toast {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 11px 18px;
+  border-radius: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: toastIn 0.2s ease;
+  max-width: 280px;
+}
+
+.toast.ok { border-color: rgba(82,255,170,0.3); color: var(--success); }
+.toast.err { border-color: rgba(255,82,82,0.3); color: var(--danger); }
+.toast.inf { border-color: rgba(71,232,255,0.3); color: var(--accent2); }
+
+@keyframes toastIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
+
+/* FOOTER */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 16px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(8,8,8,0.97);
+  backdrop-filter: blur(10px);
+}
+
+.footer-left { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--muted2); }
+
+.no-save {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--muted2);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 20px;
+}
+
+/* SCROLLBAR */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* RESPONSIVE */
+@media (max-width: 600px) {
+  header, .app, footer { padding-left: 20px; padding-right: 20px; }
+  .peer-id-display { font-size: 20px; letter-spacing: 5px; }
+  .tab-btn { padding: 14px 20px; letter-spacing: 2px; }
+  .input-group { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-mark"></div>
+    RAWSHARE
+  </div>
+  <div class="header-right">
+    <div class="status-pill" id="statusPill">
+      <div class="blink"></div>
+      <span id="statusText">STARTING</span>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- TABS -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('send', this)">SEND</button>
+    <button class="tab-btn" onclick="switchTab('receive', this)">RECEIVE</button>
+  </div>
+
+  <!-- ===== SEND PANEL ===== -->
+  <div class="panel active" id="sendPanel">
+
+    <!-- Your ID -->
+    <div class="sec-label">YOUR PEER ID</div>
+    <div class="id-card">
+      <div class="id-row">
+        <div class="peer-id-display loading" id="myId">· · · · · ·</div>
+        <button class="icon-btn" id="copyIdBtn" onclick="copyMyId()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          COPY ID
+        </button>
+      </div>
+    </div>
+
+    <!-- Connect -->
+    <div class="sec-label">CONNECT TO RECEIVER</div>
+    <div class="connect-card">
+      <div class="input-group">
+        <input class="code-input" id="targetInput" type="text" maxlength="8" placeholder="ENTER ID..." autocomplete="off" spellcheck="false">
+        <button class="cta-btn" id="connectBtn" onclick="connectToPeer()">CONNECT →</button>
+      </div>
+    </div>
+
+    <!-- Conn Bar -->
+    <div class="conn-bar" id="connBar">
+      <div class="conn-indicator" id="connInd"></div>
+      <div class="conn-label" id="connLabel">—</div>
+      <button class="sm-btn" onclick="disconnect()">DISCONNECT</button>
+    </div>
+
+    <!-- Drop Zone -->
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" multiple onchange="onFilePick(this.files)">
+      <div class="drop-arrow">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
+        </svg>
+      </div>
+      <div class="drop-title">Drop files or click to browse</div>
+      <div class="drop-sub">Any type — sent directly, never stored on any server</div>
+    </div>
+
+    <!-- File Queue -->
+    <div class="file-queue" id="fileQueue"></div>
+
+    <!-- Send Button -->
+    <button class="send-cta" id="sendBtn" disabled onclick="doSend()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+      </svg>
+      SEND FILES NOW
+    </button>
+
+  </div><!-- /sendPanel -->
+
+  <!-- ===== RECEIVE PANEL ===== -->
+  <div class="panel" id="receivePanel">
+
+    <div class="sec-label">YOUR RECEIVE ID — SHARE WITH SENDER</div>
+    <div class="id-card" style="margin-bottom:28px;">
+      <div class="id-row">
+        <div class="peer-id-display loading" id="myId2">· · · · · ·</div>
+        <button class="icon-btn" id="copyIdBtn2" onclick="copyMyId2()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          COPY ID
+        </button>
+      </div>
+    </div>
+
+    <div class="sec-label">INCOMING FILES</div>
+    <div class="receive-stack" id="receiveStack">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">📡</div>
+        <div class="empty-label">WAITING FOR FILES</div>
+        <div class="empty-sub">Share your ID above with the sender</div>
+      </div>
+    </div>
+
+  </div><!-- /receivePanel -->
+
+</div><!-- /app -->
+
+<footer>
+  <div class="footer-left">PEER TO PEER · WEBRTC · ZERO SERVER STORAGE</div>
+  <div class="no-save">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+    FILES NEVER SAVED
+  </div>
+</footer>
+
+<div class="toasts" id="toastBox"></div>
+
+<script>
+/* ========== STATE ========== */
+let peer = null, myPeerId = null, conn = null;
+let fileList = [];  /* {file, id} */
+let uid = 0;
+
+/* ========== INIT ========== */
+function init() {
+  setStatus('starting', 'STARTING...');
+  const tryId = rndId();
+  try {
+    peer = new Peer(tryId);
+    peer.on('open', id => {
+      myPeerId = id;
+      setId(id);
+      setStatus('ready', 'READY');
+      toast('Your ID: ' + id, 'inf');
+    });
+    peer.on('connection', c => {
+      conn = c;
+      setupConn(c, false);
+      showConnBar('live', 'Sender connected: <strong>' + c.peer + '</strong>');
+      setStatus('connected', 'CONNECTED');
+      switchTab('receive', document.querySelectorAll('.tab-btn')[1]);
+      toast('Sender connected', 'inf');
+    });
+    peer.on('error', e => {
+      if (e.type === 'unavailable-id') { peer.destroy(); setTimeout(init, 200); return; }
+      setStatus('ready', 'READY');
+      toast('PeerJS error: ' + e.type, 'err');
+    });
+  } catch(e) {
+    fallback();
+  }
+}
+
+function rndId() {
+  return Math.random().toString(36).substr(2, 6).toUpperCase();
+}
+
+function fallback() {
+  myPeerId = rndId();
+  setId(myPeerId);
+  setStatus('ready', 'DEMO');
+  toast('Demo mode — no real connection', 'inf');
+}
+
+function setId(id) {
+  ['myId','myId2'].forEach(el => {
+    const d = document.getElementById(el);
+    d.textContent = id;
+    d.classList.remove('loading');
+  });
+}
+
+/* ========== STATUS ========== */
+function setStatus(cls, txt) {
+  const p = document.getElementById('statusPill');
+  p.className = 'status-pill ' + cls;
+  document.getElementById('statusText').textContent = txt;
+}
+
+/* ========== TABS ========== */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.getElementById(name + 'Panel').classList.add('active');
+}
+
+/* ========== COPY ========== */
+function copyMyId() { copyText(myPeerId, 'copyIdBtn'); }
+function copyMyId2() { copyText(myPeerId, 'copyIdBtn2'); }
+
+function copyText(txt, btnId) {
+  if (!txt) return;
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = document.getElementById(btnId);
+    const orig = btn.innerHTML;
+    btn.classList.add('done');
+    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> COPIED!`;
+    setTimeout(() => { btn.classList.remove('done'); btn.innerHTML = orig; }, 2000);
+  }).catch(() => toast('Copy failed', 'err'));
+}
+
+/* ========== CONNECT ========== */
+function connectToPeer() {
+  const target = document.getElementById('targetInput').value.trim().toUpperCase();
+  if (!target || target.length < 4) { toast('Enter a valid peer ID', 'err'); return; }
+  if (!peer) { toast('Not initialized yet', 'err'); return; }
+  showConnBar('wait', 'Connecting to <strong>' + target + '</strong>...');
+  setStatus('connecting', 'CONNECTING');
+  const c = peer.connect(target, { reliable: true });
+  c.on('open', () => {
+    conn = c;
+    setupConn(c, true);
+    showConnBar('live', 'Connected to <strong>' + target + '</strong>');
+    setStatus('connected', 'CONNECTED');
+    refreshSendBtn();
+    toast('Connected to ' + target, 'ok');
+  });
+  c.on('error', () => {
+    toast('Could not connect to ' + target, 'err');
+    hideConnBar();
+    setStatus('ready', 'READY');
+  });
+}
+
+function setupConn(c, isSender) {
+  let meta = null, chunks = [], got = 0;
+  c.on('data', d => {
+    if (d.type === 'meta') {
+      meta = d; chunks = []; got = 0;
+      addRecvRow(d.name, d.size);
+    } else if (d.type === 'chunk') {
+      chunks.push(d.data);
+      got += d.data.byteLength;
+      updateRecvProgress(d.id || meta.name, got / meta.size);
+    } else if (d.type === 'done') {
+      const blob = new Blob(chunks, { type: meta.mime || 'application/octet-stream' });
+      finishRecvRow(meta.name, URL.createObjectURL(blob));
+      toast('Received: ' + meta.name, 'ok');
+    }
+  });
+  c.on('close', () => {
+    conn = null;
+    hideConnBar();
+    setStatus('ready', 'READY');
+    refreshSendBtn();
+    toast('Disconnected', 'inf');
+  });
+}
+
+function disconnect() {
+  if (conn) { conn.close(); conn = null; }
+  hideConnBar();
+  setStatus('ready', 'READY');
+  refreshSendBtn();
+}
+
+function showConnBar(state, html) {
+  const bar = document.getElementById('connBar');
+  bar.className = 'conn-bar visible';
+  const ind = document.getElementById('connInd');
+  ind.className = 'conn-indicator ' + state;
+  document.getElementById('connLabel').innerHTML = html;
+}
+
+function hideConnBar() {
+  document.getElementById('connBar').className = 'conn-bar';
+}
+
+/* ========== FILE HANDLING ========== */
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('over'); });
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('over');
+  onFilePick(e.dataTransfer.files);
+});
+
+function onFilePick(files) {
+  for (const f of files) {
+    const id = 'f' + (uid++);
+    fileList.push({ file: f, id });
+    renderFileRow(f, id);
+  }
+  refreshSendBtn();
+}
+
+function renderFileRow(f, id) {
+  const q = document.getElementById('fileQueue');
+  const div = document.createElement('div');
+  div.className = 'file-row';
+  div.id = id;
+  div.innerHTML = `
+    <div class="file-icon-box">${fileEmoji(f.name)}</div>
+    <div class="file-meta-col">
+      <div class="file-name">${esc(f.name)}</div>
+      <div class="file-info">${fmtSize(f.size)}</div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="pb-${id}"></div></div>
+    <button class="rm-btn" onclick="removeFile('${id}')">✕</button>
+  `;
+  q.appendChild(div);
+}
+
+function removeFile(id) {
+  fileList = fileList.filter(x => x.id !== id);
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  refreshSendBtn();
+}
+
+function refreshSendBtn() {
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = !(fileList.length > 0 && conn);
+}
+
+/* ========== SEND ========== */
+async function doSend() {
+  if (!conn || fileList.length === 0) return;
+  document.getElementById('sendBtn').disabled = true;
+
+  const CHUNK = 64 * 1024;
+  for (const item of fileList) {
+    const { file, id } = item;
+    conn.send({ type: 'meta', name: file.name, size: file.size, mime: file.type, id });
+    const buf = await file.arrayBuffer();
+    let offset = 0;
+    while (offset < buf.byteLength) {
+      const slice = buf.slice(offset, offset + CHUNK);
+      conn.send({ type: 'chunk', data: slice, id });
+      offset += slice.byteLength;
+      const pct = Math.round(offset / buf.byteLength * 100);
+      const bar = document.getElementById('pb-' + id);
+      if (bar) { bar.style.width = pct + '%'; if (pct === 100) bar.classList.add('done'); }
+      await pause(4);
+    }
+    conn.send({ type: 'done', id });
+    const row = document.getElementById(id);
+    if (row) row.classList.add('sent');
+    toast('Sent: ' + file.name, 'ok');
+  }
+
+  setTimeout(() => {
+    document.getElementById('sendBtn').disabled = false;
+  }, 600);
+}
+
+function pause(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ========== RECEIVE UI ========== */
+function addRecvRow(name, size) {
+  const es = document.getElementById('emptyState');
+  if (es) es.remove();
+
+  const stack = document.getElementById('receiveStack');
+  const div = document.createElement('div');
+  div.className = 'recv-row';
+  div.id = 'rr-' + name;
+  div.innerHTML = `
+    <div class="file-icon-box">${fileEmoji(name)}</div>
+    <div class="file-meta-col">
+      <div class="file-name">${esc(name)}</div>
+      <div class="file-info" id="ri-${name}">${fmtSize(size)} — receiving...</div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="rp-${name}"></div></div>
+  `;
+  stack.appendChild(div);
+}
+
+function updateRecvProgress(name, pct) {
+  const bar = document.getElementById('rp-' + name);
+  if (bar) bar.style.width = Math.round(pct * 100) + '%';
+}
+
+function finishRecvRow(name, url) {
+  const row = document.getElementById('rr-' + name);
+  if (!row) return;
+  row.classList.add('complete');
+
+  const bar = document.getElementById('rp-' + name);
+  if (bar) { bar.style.width = '100%'; bar.classList.add('done'); }
+
+  const info = document.getElementById('ri-' + name);
+  if (info) info.textContent = 'Ready to save';
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.className = 'dl-btn';
+  a.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg> SAVE`;
+  row.appendChild(a);
+}
+
+/* ========== TOAST ========== */
+function toast(msg, type) {
+  const box = document.getElementById('toastBox');
+  const d = document.createElement('div');
+  d.className = 'toast ' + (type || 'inf');
+  const icons = { ok: '✓', err: '✕', inf: '→' };
+  d.innerHTML = `<span>${icons[type] || '→'}</span><span>${msg}</span>`;
+  box.appendChild(d);
+  setTimeout(() => {
+    d.style.transition = 'opacity 0.3s, transform 0.3s';
+    d.style.opacity = '0';
+    d.style.transform = 'translateX(10px)';
+    setTimeout(() => d.remove(), 300);
+  }, 3200);
+}
+
+/* ========== HELPERS ========== */
+function fileEmoji(name) {
+  const e = name.split('.').pop().toLowerCase();
+  const m = { jpg:'🖼',jpeg:'🖼',png:'🖼',gif:'🖼',webp:'🖼',svg:'🖼',ico:'🖼',
+               mp4:'🎬',mov:'🎬',avi:'🎬',mkv:'🎬',webm:'🎬',
+               mp3:'🎵',wav:'🎵',flac:'🎵',ogg:'🎵',aac:'🎵',
+               pdf:'📄',doc:'📝',docx:'📝',xls:'📊',xlsx:'📊',csv:'📊',ppt:'📋',pptx:'📋',
+               zip:'📦',rar:'📦','7z':'📦',tar:'📦',gz:'📦',
+               js:'💻',ts:'💻',py:'💻',html:'💻',css:'💻',json:'💻',php:'💻',
+               ttf:'🔤',otf:'🔤',woff:'🔤',woff2:'🔤' };
+  return m[e] || '📁';
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+  return (b/1073741824).toFixed(2) + ' GB';
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ========== START ========== */
+init();
+</script>
+</body>
+</html>
